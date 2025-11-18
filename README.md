@@ -28,15 +28,54 @@ pbs_backup_hubseek/
 └── examples/              # Example scripts
 ```
 
-## Quick Start
+## Installation
 
-### 1. Prerequisites
+### Prerequisites
 
+- Root access on your VPS
 - Proxmox Backup Client installed (`proxmox-backup-client`)
+- Git installed
 - API token created in PBS
 - Encryption key file created
 
-### 2. Configuration
+### Installing Proxmox Backup Client
+
+For Debian/Ubuntu systems, add the Proxmox repository:
+
+```bash
+# Add Proxmox repository key
+wget https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -O /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
+
+# Add repository (adjust for your Debian version)
+echo "deb http://download.proxmox.com/debian/pbs-client bookworm main" > /etc/apt/sources.list.d/pbs-client.list
+
+# Install client
+apt update
+apt install proxmox-backup-client
+```
+
+### Install Backup Scripts
+
+```bash
+# Clone the repository
+cd /opt
+git clone https://github.com/greatplr/pbs_backup_hubseek.git
+cd pbs_backup_hubseek
+
+# Make scripts executable (should already be set)
+chmod +x backup/*.sh restore/*.sh lib/*.sh
+```
+
+### Updating
+
+```bash
+cd /opt/pbs_backup_hubseek
+git pull
+```
+
+## Quick Start
+
+### 1. Configuration
 
 ```bash
 # Copy configuration templates
@@ -73,6 +112,46 @@ sudo ./restore/restore-base.sh --list
 
 # Restore specific archive
 sudo ./restore/restore-base.sh "host/myserver/2025-01-22T15:19:17Z" etc.pxar /tmp/restore
+```
+
+## Automated Backups with Cron
+
+### Basic Daily Backup
+
+Add to root's crontab (`sudo crontab -e`):
+
+```bash
+# Daily backup at 2 AM
+0 2 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+```
+
+### Common Schedules
+
+```bash
+# Every 6 hours
+0 */6 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Daily at 3 AM
+0 3 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Twice daily (2 AM and 2 PM)
+0 2,14 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Weekly on Sunday at 1 AM
+0 1 * * 0 /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+```
+
+### Verify Cron is Working
+
+```bash
+# Check cron logs
+tail -f /var/log/pbs-backup/cron.log
+
+# List scheduled jobs
+crontab -l
+
+# Check last backup in PBS
+/opt/pbs_backup_hubseek/restore/restore-base.sh --list
 ```
 
 ## PBS Server Details
