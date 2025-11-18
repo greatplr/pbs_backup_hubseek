@@ -1,0 +1,42 @@
+# Credentials and secrets
+*.key
+*.json.key
+*_key.json
+credentials.conf
+.env
+.env.*
+!.env.example
+
+# PBS encryption keys
+**/pbscloud_key.json
+**/pbs_*.json
+**/*encryption*.key
+
+# Configuration with secrets
+config/credentials.conf
+config/*.secret
+config/*.key
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Backup artifacts (local testing)
+*.pxar
+restore-*/
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Test output
+test-output/
+coverage/

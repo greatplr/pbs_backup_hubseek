@@ -1,0 +1,24 @@
+# PBS Backup Configuration
+# Copy this file to pbs.conf and fill in your values
+
+# PBS Server Connection
+PBS_SERVER="kata.hubseek.com"
+PBS_PORT="8007"
+PBS_DATASTORE="backups"
+
+# API Token Authentication
+# Create token in PBS: Datacenter > Permissions > API Tokens
+PBS_TOKEN_USER="backup@pbs"
+PBS_TOKEN_NAME="backup-token"
+# PBS_TOKEN_SECRET is stored in credentials.conf for security
+
+# Encryption
+PBS_KEYFILE="/root/pbs_encryption_key.json"
+
+# Backup Settings
+BACKUP_SKIP_LOST_AND_FOUND="true"
+BACKUP_LOG_DIR="/var/log/pbs-backup"
+
+# Server Type Detection
+# auto | web | database | docker | mail | custom
+SERVER_TYPE="auto"
