@@ -116,29 +116,40 @@ sudo ./restore/restore-base.sh "host/myserver/2025-01-22T15:19:17Z" etc.pxar /tm
 
 ## Automated Backups with Cron
 
-### Basic Daily Backup
+Each server type has its own backup script. **Use only one cron entry per server** - these are complete wrapper scripts, not components to be combined.
+
+### Server-Specific Cron Entries
 
 Add to root's crontab (`sudo crontab -e`):
 
 ```bash
-# Daily backup at 2 AM
-0 2 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+# Enhance Backup Server - Daily at 2 AM
+# Generates UID/GID metadata, then runs PBS backup
+0 2 * * * /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Coolify Server - Daily at 3 AM (coming soon)
+# 0 3 * * * /opt/pbs_backup_hubseek/backup/backup-coolify.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Generic/Other Server - Daily at 4 AM
+# Use for servers without a specific script
+0 4 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
 ```
 
-### Common Schedules
+**Note**: Each script is self-contained. For example, `backup-enhance.sh` handles metadata generation AND the PBS backup - you don't need separate cron entries for each step.
+
+### Common Schedule Patterns
+
+Adjust the time (first two fields) based on your needs:
 
 ```bash
 # Every 6 hours
-0 */6 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
-
-# Daily at 3 AM
-0 3 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+0 */6 * * * /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
 
 # Twice daily (2 AM and 2 PM)
-0 2,14 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+0 2,14 * * * /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
 
 # Weekly on Sunday at 1 AM
-0 1 * * 0 /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
+0 1 * * 0 /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
 ```
 
 ### Verify Cron is Working
@@ -171,7 +182,7 @@ crontab -l
 ## Documentation
 
 - [PBS Backup Examples](docs/reference/pbs-backup-examples.md) - Reference scripts and patterns
-- [Server-Specific Guides](docs/) - Guides for different server types (coming soon)
+- [Enhance Backup Server Guide](docs/enhance-backup.md) - Backup/restore for Enhance v12 backup servers
 
 ## Security Notes
 
