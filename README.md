@@ -114,30 +114,66 @@ sudo ./restore/restore-base.sh --list
 sudo ./restore/restore-base.sh "host/myserver/2025-01-22T15:19:17Z" etc.pxar /tmp/restore
 ```
 
-## Automated Backups with Cron
+## Scheduling Backups
 
-Each server type has its own backup script. **Use only one cron entry per server** - these are complete wrapper scripts, not components to be combined.
+Each server type has its own backup script. **Use only one scheduled job per server** - these are complete wrapper scripts, not components to be combined.
 
-### Server-Specific Cron Entries
+### Option 1: Rundeck (Recommended)
+
+Rundeck provides centralized scheduling, monitoring, and alerting across all servers.
+
+#### Why Rundeck?
+
+- **Central dashboard** - View all backup jobs, schedules, and history in one place
+- **Alerting** - Get notified on failures
+- **No local cron management** - Schedule controlled from Rundeck server
+- **Audit trail** - Full history of job executions
+
+#### Rundeck Job Setup
+
+1. Add your server as a node in Rundeck
+2. Create a new job with the following command:
+
+```bash
+# Command to execute on remote node
+/opt/pbs_backup_hubseek/backup/backup-enhance.sh
+```
+
+3. Set the schedule in Rundeck's scheduler (equivalent to cron syntax)
+4. Configure notifications for failure alerts
+
+#### Example Rundeck Commands by Server Type
+
+| Server Type | Command |
+|-------------|---------|
+| Enhance Backup | `/opt/pbs_backup_hubseek/backup/backup-enhance.sh` |
+| Generic | `/opt/pbs_backup_hubseek/backup/backup-base.sh` |
+
+#### Scheduling Considerations
+
+- **Stagger backups** by 30 minutes to avoid overloading PBS
+- **Off-peak hours** (1-6 AM) for application servers
+- **Peak hours OK** for backup servers (they're busy during off-hours)
+
+### Option 2: Cron (Fallback/Standalone)
+
+Use local cron when Rundeck is unavailable or for standalone servers not yet added to Rundeck.
+
+#### Server-Specific Cron Entries
 
 Add to root's crontab (`sudo crontab -e`):
 
 ```bash
-# Enhance Backup Server - Daily at 2 AM
-# Generates UID/GID metadata, then runs PBS backup
-0 2 * * * /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
-
-# Coolify Server - Daily at 3 AM (coming soon)
-# 0 3 * * * /opt/pbs_backup_hubseek/backup/backup-coolify.sh >> /var/log/pbs-backup/cron.log 2>&1
+# Enhance Backup Server - Daily at 10 AM (peak OK - busy during off-hours)
+0 10 * * * /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
 
 # Generic/Other Server - Daily at 4 AM
-# Use for servers without a specific script
 0 4 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
 ```
 
 **Note**: Each script is self-contained. For example, `backup-enhance.sh` handles metadata generation AND the PBS backup - you don't need separate cron entries for each step.
 
-### Common Schedule Patterns
+#### Common Schedule Patterns
 
 Adjust the time (first two fields) based on your needs:
 
@@ -152,18 +188,20 @@ Adjust the time (first two fields) based on your needs:
 0 1 * * 0 /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
 ```
 
-### Verify Cron is Working
+### Verify Backups are Working
 
 ```bash
-# Check cron logs
+# Check local logs
 tail -f /var/log/pbs-backup/cron.log
 
-# List scheduled jobs
+# List scheduled cron jobs (if using cron)
 crontab -l
 
 # Check last backup in PBS
 /opt/pbs_backup_hubseek/restore/restore-base.sh --list
 ```
+
+For Rundeck, check the job history in the Rundeck web interface.
 
 ## PBS Server Details
 
