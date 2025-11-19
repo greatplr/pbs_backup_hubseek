@@ -237,6 +237,7 @@ For Rundeck, check the job history in the Rundeck web interface.
 
 ## Documentation
 
+- [Script Selection Guide](docs/script-selection.md) - Which scripts to run on which server
 - [PBS Server Setup Guide](docs/pbs-setup.md) - Setting up Proxmox Backup Server
 - [Ansible Deployment Guide](docs/ansible-deployment.md) - Deploying to servers with Ansible
 - [Full System Restore Guide](docs/full-system-restore.md) - Restoring entire VPS from root.pxar

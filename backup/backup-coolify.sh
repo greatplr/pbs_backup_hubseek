@@ -123,11 +123,11 @@ trap cleanup EXIT
 create_db_dump
 
 # Build archive list
-# - root.pxar: Full system for complete DR
+# Note: This script backs up Coolify instance items only (no full system).
+# For Coolify primary: run this script + backup-coolify-apps.sh (which includes root.pxar)
 # - coolify-db.pxar: Transaction-safe database dump (safer than filesystem snapshot of running DB)
 # - coolify-env.pxar and coolify-ssh.pxar: For easy selective restore of critical items
 ARCHIVES=(
-    "root.pxar:/"
     "coolify-env.pxar:${COOLIFY_ENV_FILE}"
     "coolify-ssh.pxar:${COOLIFY_SSH_DIR}"
     "coolify-db.pxar:${DB_DUMP_DIR}"
@@ -135,7 +135,6 @@ ARCHIVES=(
 
 # Display what we're backing up
 log_info "Archives to backup:"
-log_info "  - root.pxar: Full system backup"
 log_info "  - coolify-env.pxar: ${COOLIFY_ENV_FILE} (contains APP_KEY)"
 log_info "  - coolify-ssh.pxar: ${COOLIFY_SSH_DIR} (SSH private keys)"
 log_info "  - coolify-db.pxar: ${DB_DUMP_DIR} (PostgreSQL dump in custom format)"
@@ -153,10 +152,6 @@ BACKUP_CMD+=(
     --keyfile "${PBS_KEYFILE}"
     --repository "${PBS_REPOSITORY}"
 )
-
-# Add standard exclusions for system backup
-# shellcheck disable=SC2046
-BACKUP_CMD+=($(get_system_exclusions))
 
 if [[ "${BACKUP_SKIP_LOST_AND_FOUND:-true}" == "true" ]]; then
     BACKUP_CMD+=(--skip-lost-and-found)
