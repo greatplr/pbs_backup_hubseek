@@ -1,0 +1,151 @@
+#!/bin/bash
+# Coolify Instance - PBS Backup Script
+# Backs up Coolify configuration, SSH keys, and database dump
+# Note: This complements the built-in S3 backup by capturing items not included
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Load common functions
+# shellcheck source=../lib/common.sh
+source "${PROJECT_DIR}/lib/common.sh"
+
+# Load configuration
+load_config
+
+# Coolify-specific settings
+COOLIFY_DATA_DIR="/data/coolify"
+COOLIFY_ENV_FILE="${COOLIFY_DATA_DIR}/source/.env"
+COOLIFY_SSH_DIR="${COOLIFY_DATA_DIR}/ssh/keys"
+COOLIFY_DB_CONTAINER="coolify-db"
+COOLIFY_DB_USER="coolify"
+COOLIFY_DB_NAME="coolify"
+
+# Temporary directory for database dump
+DB_DUMP_DIR="/tmp/coolify-db-dump"
+DB_DUMP_FILE="${DB_DUMP_DIR}/coolify.dump"
+
+# Verify prerequisites
+check_root
+check_pbs_client
+check_keyfile
+
+# Setup logging
+LOG_DIR=$(setup_logging)
+LOG_FILE="${LOG_DIR}/backup-coolify-$(date '+%Y%m%d-%H%M%S').log"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+log_info "Starting Coolify instance backup"
+log_info "Repository: ${PBS_REPOSITORY}"
+log_info "Log file: ${LOG_FILE}"
+
+# Verify Coolify directories exist
+if [[ ! -f "${COOLIFY_ENV_FILE}" ]]; then
+    die "Coolify .env file not found: ${COOLIFY_ENV_FILE}"
+fi
+
+if [[ ! -d "${COOLIFY_SSH_DIR}" ]]; then
+    die "Coolify SSH keys directory not found: ${COOLIFY_SSH_DIR}"
+fi
+
+# Verify Docker is available
+if ! command -v docker &> /dev/null; then
+    die "Docker is required but not installed"
+fi
+
+# Verify Coolify database container is running
+if ! docker ps --format '{{.Names}}' | grep -q "^${COOLIFY_DB_CONTAINER}$"; then
+    die "Coolify database container not running: ${COOLIFY_DB_CONTAINER}"
+fi
+
+# Test PBS connection
+test_pbs_connection || die "Cannot connect to PBS server"
+
+# Create database dump
+create_db_dump() {
+    log_info "Creating PostgreSQL database dump..."
+
+    # Create dump directory
+    mkdir -p "${DB_DUMP_DIR}"
+
+    # Dump database using custom format (efficient for pg_restore)
+    if docker exec "${COOLIFY_DB_CONTAINER}" \
+        pg_dump -U "${COOLIFY_DB_USER}" -Fc "${COOLIFY_DB_NAME}" > "${DB_DUMP_FILE}"; then
+
+        local dump_size
+        dump_size=$(stat -c %s "${DB_DUMP_FILE}" 2>/dev/null || stat -f %z "${DB_DUMP_FILE}" 2>/dev/null)
+        log_success "Database dump created: $(format_bytes "$dump_size")"
+
+        # Set secure permissions
+        chmod 600 "${DB_DUMP_FILE}"
+    else
+        die "Failed to create database dump"
+    fi
+}
+
+# Cleanup function
+cleanup() {
+    if [[ -d "${DB_DUMP_DIR}" ]]; then
+        log_info "Cleaning up temporary database dump..."
+        rm -rf "${DB_DUMP_DIR}"
+    fi
+}
+
+# Set trap to cleanup on exit
+trap cleanup EXIT
+
+# Create database dump
+create_db_dump
+
+# Build archive list
+# Note: We backup individual items to allow selective restore
+ARCHIVES=(
+    "coolify-env.pxar:${COOLIFY_ENV_FILE}"
+    "coolify-ssh.pxar:${COOLIFY_SSH_DIR}"
+    "coolify-db.pxar:${DB_DUMP_DIR}"
+)
+
+# Display what we're backing up
+log_info "Archives to backup:"
+log_info "  - coolify-env.pxar: ${COOLIFY_ENV_FILE} (contains APP_KEY)"
+log_info "  - coolify-ssh.pxar: ${COOLIFY_SSH_DIR} (SSH private keys)"
+log_info "  - coolify-db.pxar: ${DB_DUMP_DIR} (PostgreSQL dump in custom format)"
+
+# Perform PBS backup
+log_info "Starting PBS backup..."
+
+BACKUP_CMD=(proxmox-backup-client backup)
+
+for archive in "${ARCHIVES[@]}"; do
+    BACKUP_CMD+=("$archive")
+done
+
+BACKUP_CMD+=(
+    --keyfile "${PBS_KEYFILE}"
+    --repository "${PBS_REPOSITORY}"
+)
+
+if [[ "${BACKUP_SKIP_LOST_AND_FOUND:-true}" == "true" ]]; then
+    BACKUP_CMD+=(--skip-lost-and-found)
+fi
+
+# Execute backup
+log_info "Executing: ${BACKUP_CMD[*]}"
+
+if "${BACKUP_CMD[@]}"; then
+    log_success "PBS backup completed successfully"
+else
+    die "PBS backup failed"
+fi
+
+# List recent snapshots
+log_info "Recent snapshots:"
+list_snapshots
+
+log_success "Coolify instance backup completed for ${PBS_HOSTNAME}"
+log_info ""
+log_info "Remember: S3 backup handles scheduled database backups."
+log_info "This PBS backup captures: APP_KEY (.env), SSH keys, and a database snapshot."
