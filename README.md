@@ -238,6 +238,7 @@ For Rundeck, check the job history in the Rundeck web interface.
 ## Documentation
 
 - [PBS Server Setup Guide](docs/pbs-setup.md) - Setting up Proxmox Backup Server
+- [Ansible Deployment Guide](docs/ansible-deployment.md) - Deploying to servers with Ansible
 - [Full System Restore Guide](docs/full-system-restore.md) - Restoring entire VPS from root.pxar
 - [PBS Backup Examples](docs/reference/pbs-backup-examples.md) - Reference scripts and patterns
 - [Enhance Control Panel Guide](docs/enhance-cp-backup.md) - Backup/restore for Enhance control panel
