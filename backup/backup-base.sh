@@ -11,6 +11,28 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=../lib/common.sh
 source "${PROJECT_DIR}/lib/common.sh"
 
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--dry-run]"
+            echo ""
+            echo "Options:"
+            echo "  --dry-run    Show what would be backed up without actually running backup"
+            echo "  -h, --help   Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
 # Load configuration
 load_config
 
@@ -42,18 +64,15 @@ else
     log_info "Using configured server type: ${DETECTED_TYPES}"
 fi
 
-# Build archive list based on server type
-# This will be extended by server-specific scripts
-ARCHIVES=()
+# Full system backup
+ARCHIVES=(
+    "root.pxar:/"
+)
 
-# Common archives for all server types
-ARCHIVES+=("etc.pxar:/etc")
-
-# Add type-specific archives
-# This section will be overridden by server-specific backup scripts
+log_info "Performing full system backup"
 
 # Perform backup
-log_info "Starting PBS backup with ${#ARCHIVES[@]} archives..."
+log_info "Starting PBS backup..."
 
 # Build the backup command
 BACKUP_CMD=(proxmox-backup-client backup)
@@ -67,15 +86,26 @@ BACKUP_CMD+=(
     --repository "${PBS_REPOSITORY}"
 )
 
+# Add standard exclusions for system backup
+# shellcheck disable=SC2046
+BACKUP_CMD+=($(get_system_exclusions))
+
 if [[ "${BACKUP_SKIP_LOST_AND_FOUND:-true}" == "true" ]]; then
     BACKUP_CMD+=(--skip-lost-and-found)
 fi
 
 # Execute backup
-if "${BACKUP_CMD[@]}"; then
-    log_success "Backup completed successfully"
+log_info "Executing: ${BACKUP_CMD[*]}"
+
+if [[ "$DRY_RUN" == true ]]; then
+    log_info "DRY RUN: Backup command would be executed (no actual backup performed)"
+    log_success "Dry run completed successfully"
 else
-    die "Backup failed"
+    if "${BACKUP_CMD[@]}"; then
+        log_success "Backup completed successfully"
+    else
+        die "Backup failed"
+    fi
 fi
 
 # List snapshots

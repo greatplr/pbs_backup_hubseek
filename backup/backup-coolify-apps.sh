@@ -12,6 +12,28 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=../lib/common.sh
 source "${PROJECT_DIR}/lib/common.sh"
 
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--dry-run]"
+            echo ""
+            echo "Options:"
+            echo "  --dry-run    Show what would be backed up without actually running backup"
+            echo "  -h, --help   Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
 # Load configuration
 load_config
 
@@ -317,7 +339,7 @@ for container in $CONTAINERS; do
                     DUMP_SIZE=$(stat -c %s "$DUMP_FILE" 2>/dev/null || stat -f %z "$DUMP_FILE" 2>/dev/null)
                     log_success "  PostgreSQL dump: $(format_bytes "$DUMP_SIZE")"
                 else
-                    log_warning "  Failed to dump PostgreSQL for $container"
+                    die "Failed to dump PostgreSQL for $container"
                 fi
                 ;;
             mysql)
@@ -326,7 +348,7 @@ for container in $CONTAINERS; do
                     DUMP_SIZE=$(stat -c %s "$DUMP_FILE" 2>/dev/null || stat -f %z "$DUMP_FILE" 2>/dev/null)
                     log_success "  MySQL dump: $(format_bytes "$DUMP_SIZE")"
                 else
-                    log_warning "  Failed to dump MySQL for $container"
+                    die "Failed to dump MySQL for $container"
                 fi
                 ;;
             mongo)
@@ -335,7 +357,7 @@ for container in $CONTAINERS; do
                     DUMP_SIZE=$(stat -c %s "$DUMP_FILE" 2>/dev/null || stat -f %z "$DUMP_FILE" 2>/dev/null)
                     log_success "  MongoDB dump: $(format_bytes "$DUMP_SIZE")"
                 else
-                    log_warning "  Failed to dump MongoDB for $container"
+                    die "Failed to dump MongoDB for $container"
                 fi
                 ;;
             redis)
@@ -448,9 +470,16 @@ log_info "  Bind mounts backed up: ${BIND_COUNT}"
 log_info "  Database dumps: ${DB_COUNT}"
 
 # Build archive for PBS
+# - root.pxar: Full system for complete DR
+# - coolify-apps.pxar: App data (volumes, binds, DB dumps) for selective restore
 ARCHIVES=(
+    "root.pxar:/"
     "coolify-apps.pxar:${BACKUP_TEMP_DIR}"
 )
+
+log_info "Archives to backup:"
+log_info "  - root.pxar: Full system backup"
+log_info "  - coolify-apps.pxar: Application data (for selective app restore)"
 
 # Perform PBS backup
 log_info "Starting PBS backup..."
@@ -466,6 +495,10 @@ BACKUP_CMD+=(
     --repository "${PBS_REPOSITORY}"
 )
 
+# Add standard exclusions for system backup
+# shellcheck disable=SC2046
+BACKUP_CMD+=($(get_system_exclusions))
+
 if [[ "${BACKUP_SKIP_LOST_AND_FOUND:-true}" == "true" ]]; then
     BACKUP_CMD+=(--skip-lost-and-found)
 fi
@@ -473,10 +506,15 @@ fi
 # Execute backup
 log_info "Executing: ${BACKUP_CMD[*]}"
 
-if "${BACKUP_CMD[@]}"; then
-    log_success "PBS backup completed successfully"
+if [[ "$DRY_RUN" == true ]]; then
+    log_info "DRY RUN: Backup command would be executed (no actual backup performed)"
+    log_success "Dry run completed successfully"
 else
-    die "PBS backup failed"
+    if "${BACKUP_CMD[@]}"; then
+        log_success "PBS backup completed successfully"
+    else
+        die "PBS backup failed"
+    fi
 fi
 
 # List recent snapshots

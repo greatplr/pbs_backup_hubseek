@@ -29,7 +29,13 @@ Options:
     -h, --help      Show this help message
 
 Examples:
-    $0 "host/myserver/2025-01-22T15:19:17Z" etc.pxar /tmp/restore-etc
+    # Full system restore
+    $0 "host/myserver/2025-01-22T15:19:17Z" root.pxar /tmp/restore-root
+
+    # Selective restore (just /etc)
+    $0 "host/myserver/2025-01-22T15:19:17Z" root.pxar /tmp/restore --include etc
+
+    # List snapshots
     $0 --list
 EOF
     exit 1

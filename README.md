@@ -110,8 +110,14 @@ sudo ./backup/backup-base.sh
 # List available snapshots
 sudo ./restore/restore-base.sh --list
 
-# Restore specific archive
-sudo ./restore/restore-base.sh "host/myserver/2025-01-22T15:19:17Z" etc.pxar /tmp/restore
+# Full system restore
+sudo ./restore/restore-base.sh "host/myserver/2025-01-22T15:19:17Z" root.pxar /tmp/restore
+
+# Selective restore (e.g., just /etc from full backup)
+proxmox-backup-client restore "host/myserver/2025-01-22T15:19:17Z" root.pxar /tmp/restore \
+    --repository "backup@pbs!token@server:datastore" \
+    --keyfile /root/pbs_encryption_key.json \
+    --include "etc/**"
 ```
 
 ## Scheduling Backups
@@ -146,7 +152,10 @@ Rundeck provides centralized scheduling, monitoring, and alerting across all ser
 
 | Server Type | Command |
 |-------------|---------|
-| Enhance Backup | `/opt/pbs_backup_hubseek/backup/backup-enhance.sh` |
+| Enhance Control Panel | `/opt/pbs_backup_hubseek/backup/backup-enhance-cp.sh` |
+| Enhance Backup Server | `/opt/pbs_backup_hubseek/backup/backup-enhance.sh` |
+| Coolify Primary | `/opt/pbs_backup_hubseek/backup/backup-coolify.sh` |
+| Coolify App Server | `/opt/pbs_backup_hubseek/backup/backup-coolify-apps.sh` |
 | Generic | `/opt/pbs_backup_hubseek/backup/backup-base.sh` |
 
 #### Scheduling Considerations
@@ -164,8 +173,17 @@ Use local cron when Rundeck is unavailable or for standalone servers not yet add
 Add to root's crontab (`sudo crontab -e`):
 
 ```bash
+# Enhance Control Panel - Daily at 2:30 AM
+30 2 * * * /opt/pbs_backup_hubseek/backup/backup-enhance-cp.sh >> /var/log/pbs-backup/cron.log 2>&1
+
 # Enhance Backup Server - Daily at 10 AM (peak OK - busy during off-hours)
 0 10 * * * /opt/pbs_backup_hubseek/backup/backup-enhance.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Coolify Primary - Daily at 3 AM
+0 3 * * * /opt/pbs_backup_hubseek/backup/backup-coolify.sh >> /var/log/pbs-backup/cron.log 2>&1
+
+# Coolify App Server - Daily at 3:30 AM
+30 3 * * * /opt/pbs_backup_hubseek/backup/backup-coolify-apps.sh >> /var/log/pbs-backup/cron.log 2>&1
 
 # Generic/Other Server - Daily at 4 AM
 0 4 * * * /opt/pbs_backup_hubseek/backup/backup-base.sh >> /var/log/pbs-backup/cron.log 2>&1
@@ -219,8 +237,12 @@ For Rundeck, check the job history in the Rundeck web interface.
 
 ## Documentation
 
+- [PBS Server Setup Guide](docs/pbs-setup.md) - Setting up Proxmox Backup Server
+- [Full System Restore Guide](docs/full-system-restore.md) - Restoring entire VPS from root.pxar
 - [PBS Backup Examples](docs/reference/pbs-backup-examples.md) - Reference scripts and patterns
+- [Enhance Control Panel Guide](docs/enhance-cp-backup.md) - Backup/restore for Enhance control panel
 - [Enhance Backup Server Guide](docs/enhance-backup.md) - Backup/restore for Enhance v12 backup servers
+- [Coolify Backup Guide](docs/coolify-backup.md) - Backup/restore for Coolify instances and applications
 
 ## Security Notes
 

@@ -8,6 +8,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Global dry-run flag (set by individual scripts)
+DRY_RUN="${DRY_RUN:-false}"
+
 # Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $*"
@@ -175,4 +178,24 @@ list_snapshots() {
         proxmox-backup-client snapshot list \
             --repository "${PBS_REPOSITORY}"
     fi
+}
+
+# Get standard exclusions for full system backup
+# Returns exclusion arguments for proxmox-backup-client
+get_system_exclusions() {
+    local exclusions=(
+        --exclude /proc
+        --exclude /sys
+        --exclude /dev
+        --exclude /tmp
+        --exclude /run
+        --exclude /var/tmp
+        --exclude /var/cache/apt
+        --exclude /lost+found
+        --exclude /mnt
+        --exclude /media
+        --exclude /swapfile
+        --exclude /swap.img
+    )
+    echo "${exclusions[@]}"
 }
