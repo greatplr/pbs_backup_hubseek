@@ -79,7 +79,7 @@ load_config() {
     # Construct PBS environment variables
     export PBS_PASSWORD="${PBS_TOKEN_SECRET}"
     export PBS_USER_STRING="${PBS_TOKEN_USER}!${PBS_TOKEN_NAME}"
-    export PBS_REPOSITORY="${PBS_USER_STRING}@${PBS_SERVER}:${PBS_DATASTORE}"
+    export PBS_REPOSITORY="${PBS_USER_STRING}@${PBS_SERVER}:${PBS_PORT}:${PBS_DATASTORE}"
     export PBS_HOSTNAME="$(hostname -s)"
 }
 
