@@ -223,7 +223,7 @@ For Rundeck, check the job history in the Rundeck web interface.
 
 ## PBS Server Details
 
-- **Server**: kata.hubseek.com (158.69.224.88)
+- **Server**: pbs.example.com (203.0.113.10)
 - **Datastore**: backups
 - **Authentication**: API token based
 - **Encryption**: Client-side with key files

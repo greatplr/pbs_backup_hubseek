@@ -6,8 +6,8 @@ This guide documents the PBS server setup for use with this backup suite.
 
 | Setting | Value |
 |---------|-------|
-| Hostname | `kata.hubseek.com` |
-| IP Address | `158.69.224.88` |
+| Hostname | `pbs.example.com` |
+| IP Address | `203.0.113.10` |
 | Port | `8007` |
 | Datastore | `backups` |
 
@@ -160,7 +160,7 @@ iptables -A INPUT -p tcp --dport 8007 -j ACCEPT
 
 From a backup client:
 ```bash
-proxmox-backup-client list --repository backup@pbs!backup-token@kata.hubseek.com:8007:backups
+proxmox-backup-client list --repository backup@pbs!backup-token@pbs.example.com:8007:backups
 ```
 
 ## Monitoring and Alerts
@@ -208,7 +208,7 @@ proxmox-backup-client version
 
 1. **`/opt/pbs_backup_hubseek/config/pbs.conf`**:
    ```bash
-   PBS_SERVER="kata.hubseek.com"
+   PBS_SERVER="pbs.example.com"
    PBS_PORT="8007"
    PBS_DATASTORE="backups"
    PBS_TOKEN_USER="backup@pbs"
@@ -303,7 +303,7 @@ apt upgrade proxmox-backup-server
 
 ```bash
 # Test connection from client
-proxmox-backup-client list --repository backup@pbs!backup-token@kata.hubseek.com:8007:backups
+proxmox-backup-client list --repository backup@pbs!backup-token@pbs.example.com:8007:backups
 
 # List all snapshots
 proxmox-backup-client snapshot list --repository ...

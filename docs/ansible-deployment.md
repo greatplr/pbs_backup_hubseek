@@ -42,7 +42,7 @@ standard_vps
 
 ```yaml
 # PBS Server Connection
-pbs_server: "kata.hubseek.com"
+pbs_server: "pbs.example.com"
 pbs_port: "8007"
 pbs_datastore: "backups"
 pbs_token_user: "backup@pbs"
@@ -374,7 +374,7 @@ ansible all -i inventory/hosts.ini -m file -a "path=/opt/pbs_backup_hubseek/conf
 Test manually on server:
 ```bash
 PBS_PASSWORD="token-secret" proxmox-backup-client list \
-  --repository backup@pbs!backup-token@kata.hubseek.com:8007:backups
+  --repository backup@pbs!backup-token@pbs.example.com:8007:backups
 ```
 
 ### Encryption key issues
