@@ -100,7 +100,8 @@ check_keyfile() {
 # Test PBS connection
 test_pbs_connection() {
     log_info "Testing connection to PBS server..."
-    if proxmox-backup-client list --repository "${PBS_REPOSITORY}" &>/dev/null; then
+    # Run with timeout and ensure PBS_PASSWORD is in the command environment
+    if timeout 30 env PBS_PASSWORD="${PBS_PASSWORD}" proxmox-backup-client snapshot list --repository "${PBS_REPOSITORY}" --output-format json &>/dev/null; then
         log_success "Successfully connected to PBS"
         return 0
     else
