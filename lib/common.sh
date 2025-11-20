@@ -101,13 +101,8 @@ check_keyfile() {
 test_pbs_connection() {
     log_info "Testing connection to PBS server..."
     # Run with timeout and ensure PBS_PASSWORD is in the command environment
-    # Include fingerprint to avoid interactive prompt
-    local fingerprint_arg=""
-    if [[ -n "${PBS_FINGERPRINT:-}" ]]; then
-        fingerprint_arg="--fingerprint ${PBS_FINGERPRINT}"
-    fi
-
-    if timeout 30 env PBS_PASSWORD="${PBS_PASSWORD}" proxmox-backup-client snapshot list --repository "${PBS_REPOSITORY}" ${fingerprint_arg} --output-format json &>/dev/null; then
+    # Note: Fingerprint must be accepted once manually before running scripts
+    if timeout 30 env PBS_PASSWORD="${PBS_PASSWORD}" proxmox-backup-client snapshot list --repository "${PBS_REPOSITORY}" --output-format json &>/dev/null; then
         log_success "Successfully connected to PBS"
         return 0
     else
