@@ -281,10 +281,20 @@ dump_databases() {
         local attempt=1
         local dump_success=false
 
+        # Build mysqldump auth arguments
+        # Modern MariaDB/MySQL on Debian/Ubuntu uses unix socket auth for root
+        # We use --defaults-file if available (works even though it has no password)
+        # This tells mysqldump to connect as root via socket
+        local mysql_auth_args=()
+        if [[ -f /etc/mysql/debian.cnf ]]; then
+            mysql_auth_args=(--defaults-file=/etc/mysql/debian.cnf)
+        else
+            # Fallback: explicit root user for socket auth
+            mysql_auth_args=(--user=root)
+        fi
+
         while [[ $attempt -le $max_attempts ]]; do
-            # Use MYSQL_PWD to avoid password in process list
-            # Try socket auth first (common for root), then fall back to no auth
-            if mysqldump --single-transaction --all-databases --routines --triggers --events > "$mysql_dump" 2>/dev/null; then
+            if mysqldump "${mysql_auth_args[@]}" --single-transaction --all-databases --routines --triggers --events > "$mysql_dump" 2>/dev/null; then
                 if validate_dump_file "$mysql_dump" 1024 "mysql-all-databases"; then
                     local dump_size
                     dump_size=$(stat -c %s "$mysql_dump" 2>/dev/null || stat -f %z "$mysql_dump" 2>/dev/null)
@@ -304,7 +314,7 @@ dump_databases() {
         done
 
         if [[ "$dump_success" != true ]]; then
-            log_warning "Failed to dump MySQL/MariaDB databases"
+            log_warning "Failed to dump MySQL/MariaDB databases - check credentials or add ~/.my.cnf for root"
             had_errors=true
         fi
     fi
