@@ -120,10 +120,12 @@ get_container_env_json() {
         }'
 }
 
-# Backup PostgreSQL database
+# Backup PostgreSQL database with retry logic
 backup_postgres() {
     local container="$1"
     local output_file="$2"
+    local max_attempts="${3:-3}"
+    local retry_delay="${4:-5}"
 
     local user=$(get_container_env "$container" "POSTGRES_USER")
     local db=$(get_container_env "$container" "POSTGRES_DB")
@@ -134,17 +136,34 @@ backup_postgres() {
 
     log_info "  Dumping PostgreSQL: user=$user, db=$db"
 
-    if docker exec "$container" pg_dump -U "$user" -Fc "$db" > "$output_file" 2>/dev/null; then
-        return 0
-    else
-        return 1
-    fi
+    local attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        if docker exec "$container" pg_dump -U "$user" -Fc "$db" > "$output_file" 2>/dev/null; then
+            # Validate the dump file
+            if validate_dump_file "$output_file" 1024 "$container/$db"; then
+                return 0
+            else
+                log_warning "  Dump validation failed, attempt $attempt/$max_attempts"
+            fi
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "  PostgreSQL dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+        fi
+        ((attempt++))
+    done
+
+    return 1
 }
 
-# Backup MySQL/MariaDB database
+# Backup MySQL/MariaDB database with retry logic
 backup_mysql() {
     local container="$1"
     local output_file="$2"
+    local max_attempts="${3:-3}"
+    local retry_delay="${4:-5}"
 
     local user=$(get_container_env "$container" "MYSQL_USER")
     local pass=$(get_container_env "$container" "MYSQL_PASSWORD")
@@ -162,38 +181,82 @@ backup_mysql() {
 
     log_info "  Dumping MySQL: user=$user, db=$db"
 
-    if [[ "$db" == "--all-databases" ]]; then
-        if docker exec "$container" mysqldump --single-transaction -u "$user" -p"$pass" --all-databases > "$output_file" 2>/dev/null; then
-            return 0
+    local attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        local dump_success=false
+
+        if [[ "$db" == "--all-databases" ]]; then
+            if docker exec -e MYSQL_PWD="$pass" "$container" mysqldump --single-transaction -u "$user" --all-databases > "$output_file" 2>/dev/null; then
+                dump_success=true
+            fi
+        else
+            if docker exec -e MYSQL_PWD="$pass" "$container" mysqldump --single-transaction -u "$user" "$db" > "$output_file" 2>/dev/null; then
+                dump_success=true
+            fi
         fi
-    else
-        if docker exec "$container" mysqldump --single-transaction -u "$user" -p"$pass" "$db" > "$output_file" 2>/dev/null; then
-            return 0
+
+        if [[ "$dump_success" == true ]]; then
+            # Validate the dump file
+            if validate_dump_file "$output_file" 1024 "$container/$db"; then
+                return 0
+            else
+                log_warning "  Dump validation failed, attempt $attempt/$max_attempts"
+            fi
         fi
-    fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "  MySQL dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+        fi
+        ((attempt++))
+    done
 
     return 1
 }
 
-# Backup MongoDB
+# Backup MongoDB with retry logic
 backup_mongo() {
     local container="$1"
     local output_file="$2"
+    local max_attempts="${3:-3}"
+    local retry_delay="${4:-5}"
 
     local user=$(get_container_env "$container" "MONGO_INITDB_ROOT_USERNAME")
     local pass=$(get_container_env "$container" "MONGO_INITDB_ROOT_PASSWORD")
 
     log_info "  Dumping MongoDB"
 
-    if [[ -n "$user" ]] && [[ -n "$pass" ]]; then
-        if docker exec "$container" mongodump --archive -u "$user" -p "$pass" --authenticationDatabase admin > "$output_file" 2>/dev/null; then
-            return 0
+    local attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        local dump_success=false
+
+        if [[ -n "$user" ]] && [[ -n "$pass" ]]; then
+            if docker exec "$container" mongodump --archive -u "$user" -p "$pass" --authenticationDatabase admin > "$output_file" 2>/dev/null; then
+                dump_success=true
+            fi
+        else
+            if docker exec "$container" mongodump --archive > "$output_file" 2>/dev/null; then
+                dump_success=true
+            fi
         fi
-    else
-        if docker exec "$container" mongodump --archive > "$output_file" 2>/dev/null; then
-            return 0
+
+        if [[ "$dump_success" == true ]]; then
+            # Validate the dump file
+            if validate_dump_file "$output_file" 512 "$container/mongodb"; then
+                return 0
+            else
+                log_warning "  Dump validation failed, attempt $attempt/$max_attempts"
+            fi
         fi
-    fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "  MongoDB dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+        fi
+        ((attempt++))
+    done
 
     return 1
 }

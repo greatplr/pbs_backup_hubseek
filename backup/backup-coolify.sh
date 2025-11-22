@@ -86,26 +86,45 @@ fi
 # Test PBS connection
 test_pbs_connection || die "Cannot connect to PBS server"
 
-# Create database dump
+# Create database dump with retry logic
 create_db_dump() {
     log_info "Creating PostgreSQL database dump..."
 
     # Create dump directory
     mkdir -p "${DB_DUMP_DIR}"
 
-    # Dump database using custom format (efficient for pg_restore)
-    if docker exec "${COOLIFY_DB_CONTAINER}" \
-        pg_dump -U "${COOLIFY_DB_USER}" -Fc "${COOLIFY_DB_NAME}" > "${DB_DUMP_FILE}"; then
+    local max_attempts=3
+    local retry_delay=5
+    local attempt=1
 
-        local dump_size
-        dump_size=$(stat -c %s "${DB_DUMP_FILE}" 2>/dev/null || stat -f %z "${DB_DUMP_FILE}" 2>/dev/null)
-        log_success "Database dump created: $(format_bytes "$dump_size")"
+    while [[ $attempt -le $max_attempts ]]; do
+        # Dump database using custom format (efficient for pg_restore)
+        if docker exec "${COOLIFY_DB_CONTAINER}" \
+            pg_dump -U "${COOLIFY_DB_USER}" -Fc "${COOLIFY_DB_NAME}" > "${DB_DUMP_FILE}"; then
 
-        # Set secure permissions
-        chmod 600 "${DB_DUMP_FILE}"
-    else
-        die "Failed to create database dump"
-    fi
+            # Validate the dump file
+            if validate_dump_file "$DB_DUMP_FILE" 1024 "coolify"; then
+                local dump_size
+                dump_size=$(stat -c %s "${DB_DUMP_FILE}" 2>/dev/null || stat -f %z "${DB_DUMP_FILE}" 2>/dev/null)
+                log_success "Database dump created: $(format_bytes "$dump_size")"
+
+                # Set secure permissions
+                chmod 600 "${DB_DUMP_FILE}"
+                return 0
+            else
+                log_warning "Dump validation failed, attempt $attempt/$max_attempts"
+            fi
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "PostgreSQL dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+        fi
+        ((attempt++))
+    done
+
+    die "Failed to create database dump after $max_attempts attempts"
 }
 
 # Cleanup function

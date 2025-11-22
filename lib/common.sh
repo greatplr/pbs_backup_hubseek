@@ -201,3 +201,59 @@ get_system_exclusions() {
     )
     echo "${exclusions[@]}"
 }
+
+# Retry a command with exponential backoff
+# Usage: retry_command <max_attempts> <initial_delay> <command...>
+# Example: retry_command 3 5 pg_dump -Fc mydb > dump.sql
+retry_command() {
+    local max_attempts="$1"
+    local delay="$2"
+    shift 2
+
+    local attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        if "$@"; then
+            return 0
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "Attempt $attempt/$max_attempts failed, retrying in ${delay}s..."
+            sleep "$delay"
+            delay=$((delay * 2))  # Exponential backoff
+        fi
+        ((attempt++))
+    done
+
+    log_error "All $max_attempts attempts failed"
+    return 1
+}
+
+# Validate dump file is not empty or suspiciously small
+# Usage: validate_dump_file <file_path> <min_size_bytes> [db_name]
+# Returns 0 if valid, 1 if invalid
+validate_dump_file() {
+    local file_path="$1"
+    local min_size="${2:-1024}"  # Default minimum 1KB
+    local db_name="${3:-database}"
+
+    if [[ ! -f "$file_path" ]]; then
+        log_error "Dump file does not exist: $file_path"
+        return 1
+    fi
+
+    local file_size
+    file_size=$(stat -c %s "$file_path" 2>/dev/null || stat -f %z "$file_path" 2>/dev/null)
+
+    if [[ "$file_size" -eq 0 ]]; then
+        log_error "Dump file is empty (0 bytes): $db_name"
+        return 1
+    fi
+
+    if [[ "$file_size" -lt "$min_size" ]]; then
+        log_warning "Dump file suspiciously small (${file_size} bytes < ${min_size} bytes): $db_name"
+        # Return success but warn - small DBs are valid
+        return 0
+    fi
+
+    return 0
+}

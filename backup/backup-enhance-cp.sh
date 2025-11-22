@@ -97,23 +97,40 @@ cleanup() {
 
 trap cleanup EXIT
 
-# Dump PostgreSQL databases
+# Dump PostgreSQL databases with retry logic
 dump_postgres_db() {
     local db_name="$1"
     local dump_file="${DB_DUMP_DIR}/${db_name}.dump"
+    local max_attempts=3
+    local retry_delay=5
 
     log_info "Dumping PostgreSQL database: ${db_name}"
 
-    if sudo -u postgres pg_dump -Fc "${db_name}" > "${dump_file}" 2>/dev/null; then
-        local dump_size
-        dump_size=$(stat -c %s "${dump_file}" 2>/dev/null || stat -f %z "${dump_file}" 2>/dev/null)
-        log_success "Database dump created: ${db_name} ($(format_bytes "$dump_size"))"
-        chmod 600 "${dump_file}"
-        return 0
-    else
-        log_error "Failed to dump database: ${db_name}"
-        return 1
-    fi
+    local attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        if sudo -u postgres pg_dump -Fc "${db_name}" > "${dump_file}" 2>/dev/null; then
+            # Validate the dump file
+            if validate_dump_file "$dump_file" 1024 "$db_name"; then
+                local dump_size
+                dump_size=$(stat -c %s "${dump_file}" 2>/dev/null || stat -f %z "${dump_file}" 2>/dev/null)
+                log_success "Database dump created: ${db_name} ($(format_bytes "$dump_size"))"
+                chmod 600 "${dump_file}"
+                return 0
+            else
+                log_warning "Dump validation failed for ${db_name}, attempt $attempt/$max_attempts"
+            fi
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "PostgreSQL dump attempt $attempt/$max_attempts failed for ${db_name}, retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+        fi
+        ((attempt++))
+    done
+
+    log_error "Failed to dump database after $max_attempts attempts: ${db_name}"
+    return 1
 }
 
 # Dump the Enhance databases
