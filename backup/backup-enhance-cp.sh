@@ -150,6 +150,56 @@ if [[ "$DUMP_FAILED" == true ]]; then
     die "One or more database dumps failed"
 fi
 
+# =============================================================================
+# Additional Application-Aware Backups
+# =============================================================================
+
+# Check for MySQL/MariaDB (in case CP server runs additional services)
+if systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mariadb 2>/dev/null; then
+    log_info "Detected MySQL/MariaDB - creating dump..."
+    mysql_dump="${DB_DUMP_DIR}/mysql-all-databases.sql"
+
+    max_attempts=3
+    retry_delay=5
+    attempt=1
+    mysql_dump_success=false
+
+    while [[ $attempt -le $max_attempts ]]; do
+        if mysqldump --single-transaction --all-databases --routines --triggers --events > "$mysql_dump" 2>/dev/null; then
+            if validate_dump_file "$mysql_dump" 1024 "mysql-all-databases"; then
+                dump_size=$(stat -c %s "$mysql_dump" 2>/dev/null || stat -f %z "$mysql_dump" 2>/dev/null)
+                log_success "MySQL dump created: $(format_bytes "$dump_size")"
+                chmod 600 "$mysql_dump"
+                mysql_dump_success=true
+                break
+            fi
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "MySQL dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+        fi
+        ((attempt++))
+    done
+
+    if [[ "$mysql_dump_success" != true ]]; then
+        log_warning "Failed to dump MySQL/MariaDB - continuing with backup"
+    fi
+fi
+
+# Trigger Redis persistence save (if running)
+log_info "Checking for Redis..."
+dump_redis || log_warning "Redis backup trigger failed - continuing"
+
+# Backup SQLite databases (if any)
+log_info "Checking for SQLite databases..."
+dump_sqlite_databases "$DB_DUMP_DIR" || log_warning "Some SQLite backups failed - continuing"
+
+# =============================================================================
+# Verify Critical Paths
+# =============================================================================
+
 # Verify critical directories exist
 log_info "Verifying critical paths..."
 

@@ -424,7 +424,8 @@ for container in $CONTAINERS; do
                 fi
                 ;;
             redis)
-                log_info "  Redis detected - skipping dump (ephemeral cache)"
+                log_info "  Redis detected - triggering persistence save if enabled"
+                dump_redis_container "$container" || log_warning "  Redis save trigger failed - continuing"
                 ;;
         esac
     fi

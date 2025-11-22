@@ -64,10 +64,53 @@ else
     log_info "Using configured server type: ${DETECTED_TYPES}"
 fi
 
-# Full system backup
+# =============================================================================
+# Application-Aware Pre-Backup Tasks
+# =============================================================================
+
+# Temporary directory for database dumps
+APP_DUMP_DIR="/tmp/pbs-app-dumps-$(date '+%Y%m%d-%H%M%S')"
+mkdir -p "$APP_DUMP_DIR"
+
+# Cleanup function for temp dumps
+cleanup_app_dumps() {
+    if [[ -d "$APP_DUMP_DIR" ]]; then
+        log_info "Cleaning up temporary dump directory..."
+        rm -rf "$APP_DUMP_DIR"
+    fi
+}
+trap cleanup_app_dumps EXIT
+
+# Dump databases (MySQL/MariaDB/PostgreSQL)
+log_info "Checking for databases to dump..."
+if ! dump_databases "$APP_DUMP_DIR"; then
+    log_warning "Some database dumps failed - continuing with backup"
+fi
+
+# Trigger Redis persistence save (if applicable)
+log_info "Checking for Redis..."
+dump_redis || log_warning "Redis backup trigger failed - continuing"
+
+# Backup SQLite databases
+log_info "Checking for SQLite databases..."
+if ! dump_sqlite_databases "$APP_DUMP_DIR"; then
+    log_warning "Some SQLite backups failed - continuing with backup"
+fi
+
+# =============================================================================
+# PBS Backup
+# =============================================================================
+
+# Build archive list
 ARCHIVES=(
     "root.pxar:/"
 )
+
+# Add app dumps archive if we have any dumps
+if [[ -d "$APP_DUMP_DIR" ]] && [[ -n "$(ls -A "$APP_DUMP_DIR" 2>/dev/null)" ]]; then
+    ARCHIVES+=("app-dumps.pxar:${APP_DUMP_DIR}")
+    log_info "Including app-dumps.pxar with database/application dumps"
+fi
 
 log_info "Performing full system backup"
 

@@ -257,3 +257,319 @@ validate_dump_file() {
 
     return 0
 }
+
+# =============================================================================
+# Application-Aware Backup Functions
+# =============================================================================
+
+# Dump all detected databases (MySQL/MariaDB/PostgreSQL) to a directory
+# Usage: dump_databases <output_dir>
+# Returns: 0 if successful (or no DBs found), 1 if any dump failed
+dump_databases() {
+    local output_dir="$1"
+    local had_errors=false
+
+    mkdir -p "$output_dir"
+
+    # Check for MySQL/MariaDB
+    if systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mariadb 2>/dev/null; then
+        log_info "Detected MySQL/MariaDB - creating dump..."
+        local mysql_dump="${output_dir}/mysql-all-databases.sql"
+
+        local max_attempts=3
+        local retry_delay=5
+        local attempt=1
+        local dump_success=false
+
+        while [[ $attempt -le $max_attempts ]]; do
+            # Use MYSQL_PWD to avoid password in process list
+            # Try socket auth first (common for root), then fall back to no auth
+            if mysqldump --single-transaction --all-databases --routines --triggers --events > "$mysql_dump" 2>/dev/null; then
+                if validate_dump_file "$mysql_dump" 1024 "mysql-all-databases"; then
+                    local dump_size
+                    dump_size=$(stat -c %s "$mysql_dump" 2>/dev/null || stat -f %z "$mysql_dump" 2>/dev/null)
+                    log_success "MySQL dump created: $(format_bytes "$dump_size")"
+                    chmod 600 "$mysql_dump"
+                    dump_success=true
+                    break
+                fi
+            fi
+
+            if [[ $attempt -lt $max_attempts ]]; then
+                log_warning "MySQL dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+                sleep "$retry_delay"
+                retry_delay=$((retry_delay * 2))
+            fi
+            ((attempt++))
+        done
+
+        if [[ "$dump_success" != true ]]; then
+            log_warning "Failed to dump MySQL/MariaDB databases"
+            had_errors=true
+        fi
+    fi
+
+    # Check for PostgreSQL
+    if systemctl is-active --quiet postgresql 2>/dev/null; then
+        log_info "Detected PostgreSQL - creating dump..."
+        local pg_dump="${output_dir}/postgresql-all-databases.sql"
+
+        local max_attempts=3
+        local retry_delay=5
+        local attempt=1
+        local dump_success=false
+
+        while [[ $attempt -le $max_attempts ]]; do
+            if sudo -u postgres pg_dumpall > "$pg_dump" 2>/dev/null; then
+                if validate_dump_file "$pg_dump" 1024 "postgresql-all-databases"; then
+                    local dump_size
+                    dump_size=$(stat -c %s "$pg_dump" 2>/dev/null || stat -f %z "$pg_dump" 2>/dev/null)
+                    log_success "PostgreSQL dump created: $(format_bytes "$dump_size")"
+                    chmod 600 "$pg_dump"
+                    dump_success=true
+                    break
+                fi
+            fi
+
+            if [[ $attempt -lt $max_attempts ]]; then
+                log_warning "PostgreSQL dump attempt $attempt/$max_attempts failed, retrying in ${retry_delay}s..."
+                sleep "$retry_delay"
+                retry_delay=$((retry_delay * 2))
+            fi
+            ((attempt++))
+        done
+
+        if [[ "$dump_success" != true ]]; then
+            log_warning "Failed to dump PostgreSQL databases"
+            had_errors=true
+        fi
+    fi
+
+    if [[ "$had_errors" == true ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Trigger Redis persistence save if persistence is enabled
+# Usage: dump_redis [host] [port]
+# Returns: 0 if successful (or Redis not running/no persistence), 1 on error
+dump_redis() {
+    local redis_host="${1:-127.0.0.1}"
+    local redis_port="${2:-6379}"
+
+    # Check if Redis is running
+    if ! systemctl is-active --quiet redis 2>/dev/null && \
+       ! systemctl is-active --quiet redis-server 2>/dev/null; then
+        # Redis not running as a service, skip
+        return 0
+    fi
+
+    if ! command -v redis-cli &> /dev/null; then
+        log_warning "Redis is running but redis-cli not found - skipping Redis backup"
+        return 0
+    fi
+
+    log_info "Detected Redis - checking persistence configuration..."
+
+    # Check if persistence is enabled
+    local save_config appendonly_config
+    save_config=$(redis-cli -h "$redis_host" -p "$redis_port" CONFIG GET save 2>/dev/null | tail -1 || echo "")
+    appendonly_config=$(redis-cli -h "$redis_host" -p "$redis_port" CONFIG GET appendonly 2>/dev/null | tail -1 || echo "no")
+
+    local has_rdb=false
+    local has_aof=false
+
+    # Check RDB persistence (save config not empty)
+    if [[ -n "$save_config" && "$save_config" != '""' && "$save_config" != "''" ]]; then
+        has_rdb=true
+    fi
+
+    # Check AOF persistence
+    if [[ "$appendonly_config" == "yes" ]]; then
+        has_aof=true
+    fi
+
+    if [[ "$has_rdb" != true && "$has_aof" != true ]]; then
+        log_info "Redis persistence not enabled - skipping (ephemeral cache)"
+        return 0
+    fi
+
+    # Trigger saves based on what's enabled
+    if [[ "$has_rdb" == true ]]; then
+        log_info "Triggering Redis BGSAVE (RDB snapshot)..."
+        if redis-cli -h "$redis_host" -p "$redis_port" BGSAVE &>/dev/null; then
+            # Wait for BGSAVE to complete (with timeout)
+            local timeout=60
+            local waited=0
+            while [[ $waited -lt $timeout ]]; do
+                local lastsave_status
+                lastsave_status=$(redis-cli -h "$redis_host" -p "$redis_port" LASTSAVE 2>/dev/null || echo "")
+                local bgsave_in_progress
+                bgsave_in_progress=$(redis-cli -h "$redis_host" -p "$redis_port" INFO persistence 2>/dev/null | grep "rdb_bgsave_in_progress:1" || echo "")
+
+                if [[ -z "$bgsave_in_progress" ]]; then
+                    log_success "Redis BGSAVE completed"
+                    break
+                fi
+
+                sleep 1
+                ((waited++))
+            done
+
+            if [[ $waited -ge $timeout ]]; then
+                log_warning "Redis BGSAVE timed out after ${timeout}s - continuing anyway"
+            fi
+        else
+            log_warning "Failed to trigger Redis BGSAVE"
+        fi
+    fi
+
+    if [[ "$has_aof" == true ]]; then
+        log_info "Triggering Redis BGREWRITEAOF..."
+        if redis-cli -h "$redis_host" -p "$redis_port" BGREWRITEAOF &>/dev/null; then
+            log_success "Redis BGREWRITEAOF triggered"
+            # Don't wait for AOF rewrite - it runs in background and AOF is already durable
+        else
+            log_warning "Failed to trigger Redis BGREWRITEAOF"
+        fi
+    fi
+
+    return 0
+}
+
+# Trigger Redis save in a Docker container
+# Usage: dump_redis_container <container_name>
+# Returns: 0 if successful, 1 on error
+dump_redis_container() {
+    local container="$1"
+
+    log_info "Checking Redis persistence in container: $container"
+
+    # Check if persistence is enabled
+    local save_config appendonly_config
+    save_config=$(docker exec "$container" redis-cli CONFIG GET save 2>/dev/null | tail -1 || echo "")
+    appendonly_config=$(docker exec "$container" redis-cli CONFIG GET appendonly 2>/dev/null | tail -1 || echo "no")
+
+    local has_rdb=false
+    local has_aof=false
+
+    if [[ -n "$save_config" && "$save_config" != '""' && "$save_config" != "''" ]]; then
+        has_rdb=true
+    fi
+
+    if [[ "$appendonly_config" == "yes" ]]; then
+        has_aof=true
+    fi
+
+    if [[ "$has_rdb" != true && "$has_aof" != true ]]; then
+        log_info "  Redis persistence not enabled - skipping (ephemeral cache)"
+        return 0
+    fi
+
+    if [[ "$has_rdb" == true ]]; then
+        log_info "  Triggering BGSAVE..."
+        if docker exec "$container" redis-cli BGSAVE &>/dev/null; then
+            # Wait for completion
+            local timeout=60
+            local waited=0
+            while [[ $waited -lt $timeout ]]; do
+                local bgsave_in_progress
+                bgsave_in_progress=$(docker exec "$container" redis-cli INFO persistence 2>/dev/null | grep "rdb_bgsave_in_progress:1" || echo "")
+                if [[ -z "$bgsave_in_progress" ]]; then
+                    log_success "  Redis BGSAVE completed"
+                    break
+                fi
+                sleep 1
+                ((waited++))
+            done
+        fi
+    fi
+
+    if [[ "$has_aof" == true ]]; then
+        log_info "  Triggering BGREWRITEAOF..."
+        docker exec "$container" redis-cli BGREWRITEAOF &>/dev/null || true
+        log_success "  Redis BGREWRITEAOF triggered"
+    fi
+
+    return 0
+}
+
+# Backup SQLite databases from common locations
+# Usage: dump_sqlite_databases <output_dir>
+# Returns: 0 if successful, 1 if any backup failed
+dump_sqlite_databases() {
+    local output_dir="$1"
+    local found_any=false
+    local had_errors=false
+
+    mkdir -p "$output_dir"
+
+    # Common SQLite database locations
+    local -a sqlite_paths=(
+        # Grafana
+        "/var/lib/grafana/grafana.db"
+        # Prometheus (if using SQLite for some configs)
+        "/var/lib/prometheus/data.db"
+        # Home Assistant
+        "/var/lib/homeassistant/home-assistant_v2.db"
+        # Pi-hole
+        "/etc/pihole/pihole-FTL.db"
+        "/etc/pihole/gravity.db"
+        # Authelia
+        "/var/lib/authelia/db.sqlite3"
+        # Caddy
+        "/var/lib/caddy/.local/share/caddy/autosave.json"
+        # Syncthing
+        "/var/lib/syncthing/index-v0.14.0.db"
+        # Miniflux
+        "/var/lib/miniflux/miniflux.db"
+        # Vaultwarden/Bitwarden
+        "/var/lib/vaultwarden/db.sqlite3"
+        "/var/lib/bitwarden_rs/db.sqlite3"
+    )
+
+    for db_path in "${sqlite_paths[@]}"; do
+        if [[ -f "$db_path" ]]; then
+            found_any=true
+            local db_name
+            db_name=$(basename "$db_path")
+            local safe_name
+            safe_name=$(echo "$db_path" | tr '/' '_' | sed 's/^_//')
+            local backup_file="${output_dir}/${safe_name}"
+
+            log_info "Found SQLite database: $db_path"
+
+            # Use sqlite3 .backup command for safe copy (handles locks properly)
+            if command -v sqlite3 &> /dev/null; then
+                if sqlite3 "$db_path" ".backup '${backup_file}'" 2>/dev/null; then
+                    local backup_size
+                    backup_size=$(stat -c %s "$backup_file" 2>/dev/null || stat -f %z "$backup_file" 2>/dev/null)
+                    log_success "SQLite backup created: $db_name ($(format_bytes "$backup_size"))"
+                    chmod 600 "$backup_file"
+                else
+                    log_warning "Failed to backup SQLite database: $db_path"
+                    had_errors=true
+                fi
+            else
+                # Fallback: copy with file lock check
+                if cp "$db_path" "$backup_file" 2>/dev/null; then
+                    log_success "SQLite copied (sqlite3 not available for safe backup): $db_name"
+                    chmod 600 "$backup_file"
+                else
+                    log_warning "Failed to copy SQLite database: $db_path"
+                    had_errors=true
+                fi
+            fi
+        fi
+    done
+
+    if [[ "$found_any" != true ]]; then
+        log_info "No SQLite databases found in common locations"
+    fi
+
+    if [[ "$had_errors" == true ]]; then
+        return 1
+    fi
+    return 0
+}
