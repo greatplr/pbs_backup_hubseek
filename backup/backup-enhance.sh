@@ -179,11 +179,8 @@ done
 BACKUP_CMD+=(
     --keyfile "${PBS_KEYFILE}"
     --repository "${PBS_REPOSITORY}"
+    --change-detection-mode metadata
 )
-
-# Add standard exclusions for system backup
-# shellcheck disable=SC2046
-BACKUP_CMD+=($(get_system_exclusions))
 
 if [[ "${BACKUP_SKIP_LOST_AND_FOUND:-true}" == "true" ]]; then
     BACKUP_CMD+=(--skip-lost-and-found)
