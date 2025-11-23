@@ -37,13 +37,29 @@ done
 load_config
 
 # Enhance-specific settings
-ENHANCE_BACKUP_DIR="/backups"
+# Auto-detect backup directory from Enhance appcd config
+ENHANCE_APPCD_CONFIG="/var/local/enhance/appcd/manager.json"
+if [[ -f "$ENHANCE_APPCD_CONFIG" ]] && command -v python3 &> /dev/null; then
+    DETECTED_BACKUP_DIR=$(python3 -c "import json; print(json.load(open('$ENHANCE_APPCD_CONFIG')).get('backup_targets', ['/backups'])[0])" 2>/dev/null)
+    ENHANCE_BACKUP_DIR="${DETECTED_BACKUP_DIR:-/backups}"
+else
+    ENHANCE_BACKUP_DIR="/backups"
+fi
 ENHANCE_METADATA_FILE="${ENHANCE_BACKUP_DIR}/.pbs_user_metadata.json"
+
+# Lock file to prevent concurrent runs
+LOCKFILE="/var/lock/pbs-backup-enhance.lock"
 
 # Verify prerequisites
 check_root
 check_pbs_client
 check_keyfile
+
+# Acquire lock to prevent concurrent runs
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+    die "Another instance of backup-enhance.sh is already running. Exiting."
+fi
 
 # Setup logging
 LOG_DIR=$(setup_logging)

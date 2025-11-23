@@ -15,8 +15,18 @@ source "${PROJECT_DIR}/lib/common.sh"
 load_config
 
 # Enhance-specific settings
-ENHANCE_BACKUP_DIR="/backups"
+# Auto-detect backup directory from Enhance appcd config
+ENHANCE_APPCD_CONFIG="/var/local/enhance/appcd/manager.json"
+if [[ -f "$ENHANCE_APPCD_CONFIG" ]] && command -v python3 &> /dev/null; then
+    DETECTED_BACKUP_DIR=$(python3 -c "import json; print(json.load(open('$ENHANCE_APPCD_CONFIG')).get('backup_targets', ['/backups'])[0])" 2>/dev/null)
+    ENHANCE_BACKUP_DIR="${DETECTED_BACKUP_DIR:-/backups}"
+else
+    ENHANCE_BACKUP_DIR="/backups"
+fi
 ENHANCE_METADATA_FILE="${ENHANCE_BACKUP_DIR}/.pbs_user_metadata.json"
+
+# Lock file to prevent concurrent runs
+LOCKFILE="/var/lock/pbs-restore-enhance.lock"
 
 # Usage
 usage() {
@@ -24,6 +34,9 @@ usage() {
 Usage: $0 [OPTIONS] <snapshot_path>
 
 Restore Enhance backup server data from PBS.
+
+By default, only restores snapshot directories (snapshot-*, wip-snapshot-*, current)
+to avoid overwriting existing site data. Use --full for complete restore.
 
 Arguments:
     snapshot_path       Path to snapshot (e.g., host/myserver/2025-01-22T15:19:17Z)
@@ -33,17 +46,18 @@ Options:
     -c, --create-users  Create users/groups from metadata (for new server restore)
     -m, --metadata-only Extract and display metadata without full restore
     -d, --dest PATH     Restore to alternate destination (default: ${ENHANCE_BACKUP_DIR})
+    -f, --full          Restore all files (not just snapshots)
     -h, --help          Show this help message
 
 Examples:
     # List available snapshots
     $0 --list
 
-    # Restore to existing server (users already exist)
+    # Restore snapshots to existing server (default - safe)
     $0 "host/enhance-backup/2025-01-22T15:19:17Z"
 
-    # Restore to new server (create users first)
-    $0 --create-users "host/enhance-backup/2025-01-22T15:19:17Z"
+    # Restore to new server (create users, full restore)
+    $0 --create-users --full "host/enhance-backup/2025-01-22T15:19:17Z"
 
     # Extract metadata only (to review before restore)
     $0 --metadata-only "host/enhance-backup/2025-01-22T15:19:17Z"
@@ -54,6 +68,7 @@ EOF
 # Parse arguments
 CREATE_USERS=false
 METADATA_ONLY=false
+FULL_RESTORE=false
 RESTORE_DEST="${ENHANCE_BACKUP_DIR}"
 SNAPSHOT_PATH=""
 
@@ -75,6 +90,10 @@ while [[ $# -gt 0 ]]; do
         -d|--dest)
             RESTORE_DEST="$2"
             shift 2
+            ;;
+        -f|--full)
+            FULL_RESTORE=true
+            shift
             ;;
         -h|--help)
             usage
@@ -100,6 +119,12 @@ check_root
 check_pbs_client
 check_keyfile
 
+# Acquire lock to prevent concurrent runs
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+    die "Another instance of restore-enhance.sh is already running. Exiting."
+fi
+
 # Setup logging
 LOG_DIR=$(setup_logging)
 LOG_FILE="${LOG_DIR}/restore-enhance-$(date '+%Y%m%d-%H%M%S').log"
@@ -110,6 +135,7 @@ log_info "Starting Enhance backup server restore"
 log_info "Snapshot: ${SNAPSHOT_PATH}"
 log_info "Destination: ${RESTORE_DEST}"
 log_info "Create users: ${CREATE_USERS}"
+log_info "Full restore: ${FULL_RESTORE}"
 log_info "Repository: ${PBS_REPOSITORY}"
 log_info "Log file: ${LOG_FILE}"
 
@@ -281,7 +307,7 @@ else
     log_warning "Proceeding with restore without metadata"
 fi
 
-# Confirm before full restore
+# Confirm before restore
 if [[ -t 0 ]]; then
     echo ""
     echo "=== Restore Summary ==="
@@ -291,9 +317,18 @@ if [[ -t 0 ]]; then
     if [[ "$CREATE_USERS" == true ]]; then
         echo "Users:       Created from metadata"
     fi
+    if [[ "$FULL_RESTORE" == true ]]; then
+        echo "Mode:        FULL (all files)"
+    else
+        echo "Mode:        Snapshots only (snapshot-*, wip-snapshot-*, current)"
+    fi
     echo "======================="
     echo ""
-    echo "WARNING: This will overwrite existing files in ${RESTORE_DEST}"
+    if [[ "$FULL_RESTORE" == true ]]; then
+        echo "WARNING: This will overwrite ALL existing files in ${RESTORE_DEST}"
+    else
+        echo "WARNING: This will overwrite existing snapshot directories in ${RESTORE_DEST}"
+    fi
     read -p "Proceed with restore? (y/N) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -305,24 +340,46 @@ fi
 # Create destination directory
 mkdir -p "$RESTORE_DEST"
 
-# Perform full restore
-log_info "Starting full restore to ${RESTORE_DEST}..."
+# Perform restore
+if [[ "$FULL_RESTORE" == true ]]; then
+    log_info "Starting FULL restore to ${RESTORE_DEST}..."
 
-if proxmox-backup-client restore \
-    "${SNAPSHOT_PATH}" \
-    "backups.pxar" \
-    "${RESTORE_DEST}" \
-    --repository "${PBS_REPOSITORY}" \
-    --keyfile "${PBS_KEYFILE}"; then
+    if proxmox-backup-client restore \
+        "${SNAPSHOT_PATH}" \
+        "backups.pxar" \
+        "${RESTORE_DEST}" \
+        --repository "${PBS_REPOSITORY}" \
+        --keyfile "${PBS_KEYFILE}"; then
 
-    log_success "Restore completed successfully"
-
-    # Show summary
-    local site_count
-    site_count=$(find "$RESTORE_DEST" -mindepth 1 -maxdepth 1 -type d ! -name ".*" | wc -l)
-    log_info "Restored ${site_count} site directories to ${RESTORE_DEST}"
+        log_success "Full restore completed successfully"
+    else
+        die "Restore failed"
+    fi
 else
-    die "Restore failed"
+    log_info "Starting snapshots-only restore to ${RESTORE_DEST}..."
+    log_info "Restoring: snapshot-*, wip-snapshot-*, current"
+
+    # Use --include patterns to only restore snapshot directories
+    # PBS pxar restore supports glob patterns with --include
+    if proxmox-backup-client restore \
+        "${SNAPSHOT_PATH}" \
+        "backups.pxar" \
+        "${RESTORE_DEST}" \
+        --repository "${PBS_REPOSITORY}" \
+        --keyfile "${PBS_KEYFILE}" \
+        --include "*/snapshot-*/**" \
+        --include "*/wip-snapshot-*/**" \
+        --include "*/current" \
+        --include ".pbs_user_metadata.json"; then
+
+        log_success "Snapshots-only restore completed successfully"
+    else
+        die "Restore failed"
+    fi
 fi
+
+# Show summary
+site_count=$(find "$RESTORE_DEST" -mindepth 1 -maxdepth 1 -type d ! -name ".*" 2>/dev/null | wc -l)
+log_info "Restored to ${RESTORE_DEST} (${site_count} site directories)"
 
 log_success "Enhance restore completed"
