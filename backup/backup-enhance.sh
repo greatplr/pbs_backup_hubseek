@@ -158,16 +158,14 @@ EOF
 generate_user_metadata
 
 # Build archive list
-# - root.pxar: Full system for complete DR
-# - backups.pxar: Just the backups dir for easy selective restore of individual sites
+# Only backup the backups directory - the OS can be rebuilt easily
+# The metadata file (.pbs_user_metadata.json) is included inside this directory
 ARCHIVES=(
-    "root.pxar:/"
     "backups.pxar:${ENHANCE_BACKUP_DIR}"
 )
 
 log_info "Archives to backup:"
-log_info "  - root.pxar: Full system backup"
-log_info "  - backups.pxar: ${ENHANCE_BACKUP_DIR} (for selective site restore)"
+log_info "  - backups.pxar: ${ENHANCE_BACKUP_DIR} (includes UID/GID metadata)"
 
 # Perform PBS backup
 log_info "Starting PBS backup..."
