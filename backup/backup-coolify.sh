@@ -45,9 +45,11 @@ COOLIFY_DB_CONTAINER="coolify-db"
 COOLIFY_DB_USER="coolify"
 COOLIFY_DB_NAME="coolify"
 
-# Temporary directory for database dump
-DB_DUMP_DIR="/tmp/coolify-db-dump"
+# Temporary directory for database dump and env file
+BACKUP_TEMP_DIR="/tmp/coolify-backup-$(date '+%Y%m%d-%H%M%S')"
+DB_DUMP_DIR="${BACKUP_TEMP_DIR}/db"
 DB_DUMP_FILE="${DB_DUMP_DIR}/coolify.dump"
+ENV_BACKUP_DIR="${BACKUP_TEMP_DIR}/env"
 
 # Verify prerequisites
 check_root
@@ -90,9 +92,6 @@ test_pbs_connection || die "Cannot connect to PBS server"
 create_db_dump() {
     log_info "Creating PostgreSQL database dump..."
 
-    # Create dump directory
-    mkdir -p "${DB_DUMP_DIR}"
-
     local max_attempts=3
     local retry_delay=5
     local attempt=1
@@ -129,14 +128,22 @@ create_db_dump() {
 
 # Cleanup function
 cleanup() {
-    if [[ -d "${DB_DUMP_DIR}" ]]; then
-        log_info "Cleaning up temporary database dump..."
-        rm -rf "${DB_DUMP_DIR}"
+    if [[ -d "${BACKUP_TEMP_DIR}" ]]; then
+        log_info "Cleaning up temporary backup directory..."
+        rm -rf "${BACKUP_TEMP_DIR}"
     fi
 }
 
 # Set trap to cleanup on exit
 trap cleanup EXIT
+
+# Create temp directories
+mkdir -p "${DB_DUMP_DIR}" "${ENV_BACKUP_DIR}"
+
+# Copy .env file to temp directory (PBS pxar requires directories, not files)
+log_info "Copying .env file..."
+cp "${COOLIFY_ENV_FILE}" "${ENV_BACKUP_DIR}/.env"
+chmod 600 "${ENV_BACKUP_DIR}/.env"
 
 # Create database dump
 create_db_dump
@@ -147,14 +154,14 @@ create_db_dump
 # - coolify-db.pxar: Transaction-safe database dump (safer than filesystem snapshot of running DB)
 # - coolify-env.pxar and coolify-ssh.pxar: For easy selective restore of critical items
 ARCHIVES=(
-    "coolify-env.pxar:${COOLIFY_ENV_FILE}"
+    "coolify-env.pxar:${ENV_BACKUP_DIR}"
     "coolify-ssh.pxar:${COOLIFY_SSH_DIR}"
     "coolify-db.pxar:${DB_DUMP_DIR}"
 )
 
 # Display what we're backing up
 log_info "Archives to backup:"
-log_info "  - coolify-env.pxar: ${COOLIFY_ENV_FILE} (contains APP_KEY)"
+log_info "  - coolify-env.pxar: ${ENV_BACKUP_DIR} (contains APP_KEY from .env)"
 log_info "  - coolify-ssh.pxar: ${COOLIFY_SSH_DIR} (SSH private keys)"
 log_info "  - coolify-db.pxar: ${DB_DUMP_DIR} (PostgreSQL dump in custom format)"
 
