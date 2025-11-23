@@ -128,7 +128,7 @@ generate_user_metadata() {
       "home": "$home_dir"
     }
 EOF
-        ((site_count++))
+        site_count=$((site_count + 1))
     done
 
     echo "" >> "$metadata_tmp"
